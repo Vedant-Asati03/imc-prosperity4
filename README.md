@@ -5,6 +5,8 @@
 ```bash
 uv sync
 
+source .venv/bin/activate
+
 backtest --round 0 --plot
 ```
 
