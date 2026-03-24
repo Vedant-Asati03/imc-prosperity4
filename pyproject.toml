@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-backtest = "tool.backtester:main"
+run = "tool.runner:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]
