@@ -12,3 +12,5 @@ wheels/
 data/
 plots/
 logs/
+tests/
+resources/links.md
