@@ -313,7 +313,7 @@ class Trader:
         trader_object: dict[str, Any] = {}
         if state.traderData:
             try:
-                decoded = jsonpickle.decode(state.traderData) # type: ignore
+                decoded = jsonpickle.decode(state.traderData)  # type: ignore
                 if isinstance(decoded, dict):
                     trader_object = cast(dict[str, Any], decoded)
             except Exception:
@@ -392,6 +392,6 @@ class Trader:
                 result[Product.TOMATOES] = take_orders + clear_orders + make_orders
 
         conversions = 0
-        encoded = jsonpickle.encode(trader_object) # type: ignore
+        encoded = jsonpickle.encode(trader_object)  # type: ignore
         trader_data = encoded if isinstance(encoded, str) else ""
         return result, conversions, trader_data
