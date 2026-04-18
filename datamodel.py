@@ -345,10 +345,15 @@ def build_replay_frames(
     data_root: Path | None = None,
     trader_data: str = "",
     initial_position: Dict[Product, Position] | None = None,
+    data_file: Path | None = None,
 ) -> List[ReplayFrame]:
-    price_rows, trade_rows = load_day_rows(
-        round_id=round_id, day=day, data_root=data_root
-    )
+    if data_file is not None:
+        price_rows = _read_csv_rows(data_file)
+        trade_rows = []
+    else:
+        price_rows, trade_rows = load_day_rows(
+            round_id=round_id, day=day, data_root=data_root
+        )
 
     products = discover_products(price_rows)
     listings = build_listings(products)
