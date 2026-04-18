@@ -573,6 +573,9 @@ def build_parser() -> argparse.ArgumentParser:
         "-p", "--plot", action="store_true", help="Save plots for each day"
     )
     parser.add_argument(
+        "-d", "--data-file", type=Path, help="Specific data file to run instead of scanning data root"
+    )
+    parser.add_argument(
         "--run-id",
         type=str,
         help="Optional run id override (default: generated numeric id)",
@@ -594,26 +597,36 @@ def main() -> int:
         strategy_path = resolve_strategy_path(args.round, args.strategy)
         trader_cls = load_trader_class(strategy_path)
 
-        round_days = discover_round_days(round_id=args.round, data_root=args.data_root)
-        if not round_days:
-            raise FileNotFoundError(f"No day files discovered for round {args.round}")
+        if args.data_file:
+            import re
+            m = re.search(r"day_(-?\d+)", args.data_file.name)
+            days = [int(m.group(1))] if m else [0]
+        else:
+            round_days = discover_round_days(round_id=args.round, data_root=args.data_root)
+            if not round_days:
+                raise FileNotFoundError(f"No day files discovered for round {args.round}")
+            days = [item.day for item in round_days]
 
         run_id = args.run_id or generate_run_id()
 
         print("Local platform-style replay")
         print(f"Round: {args.round}")
         print(f"Strategy: {strategy_path}")
-        print(f"Days: {', '.join(str(day.day) for day in round_days)}")
+        if args.data_file:
+            print(f"Data File: {args.data_file}")
+        else:
+            print(f"Days: {', '.join(str(day) for day in days)}")
         print("=" * 72)
 
         day_results: List[Dict[str, Any]] = []
         plots_by_day: Dict[int, str] = {}
 
-        for day in [item.day for item in round_days]:
+        for day in days:
             frames = build_replay_frames(
                 round_id=args.round,
                 day=day,
                 data_root=args.data_root,
+                data_file=args.data_file,
             )
             day_result = run_day(
                 day=day,
