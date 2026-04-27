@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, cast
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from datamodel import (
     OrderDepth,
@@ -552,6 +553,236 @@ def plot_day_result(day_result: Dict[str, Any], output_dir: Path, label: str) ->
     return out_path
 
 
+def summarize_product_day(
+    prices_df: pd.DataFrame,
+    trades_df: pd.DataFrame,
+) -> Dict[str, Dict[str, float | int | None]]:
+    summaries: Dict[str, Dict[str, float | int | None]] = {}
+
+    if prices_df.empty:
+        return summaries
+
+    safe_prices_df = prices_df.copy()
+    col = safe_prices_df.get("mid_price")
+    if col is None:
+        col = pd.Series([None] * len(safe_prices_df), index=safe_prices_df.index)
+    safe_prices_df["mid_price"] = pd.to_numeric(col, errors="coerce")
+
+    col = safe_prices_df.get("bid_price_1")
+    if col is None:
+        col = pd.Series([None] * len(safe_prices_df), index=safe_prices_df.index)
+    safe_prices_df["bid_price_1"] = pd.to_numeric(col, errors="coerce")
+
+    col = safe_prices_df.get("ask_price_1")
+    if col is None:
+        col = pd.Series([None] * len(safe_prices_df), index=safe_prices_df.index)
+    safe_prices_df["ask_price_1"] = pd.to_numeric(col, errors="coerce")
+    safe_prices_df["spread"] = (
+        safe_prices_df["ask_price_1"] - safe_prices_df["bid_price_1"]
+    )
+
+    safe_trades_df = trades_df.copy()
+    if not safe_trades_df.empty:
+        col = safe_trades_df.get("price")
+        if col is None:
+            col = pd.Series([None] * len(safe_trades_df), index=safe_trades_df.index)
+        safe_trades_df["price"] = pd.to_numeric(col, errors="coerce")
+
+        col = safe_trades_df.get("quantity")
+        if col is None:
+            col = pd.Series([None] * len(safe_trades_df), index=safe_trades_df.index)
+        safe_trades_df["quantity"] = pd.to_numeric(col, errors="coerce")
+        safe_trades_df["abs_quantity"] = safe_trades_df["quantity"].abs()
+        safe_trades_df["notional"] = (
+            safe_trades_df["price"] * safe_trades_df["abs_quantity"]
+        )
+
+    for product, product_prices in safe_prices_df.groupby("product"):
+        mid = product_prices["mid_price"].dropna()
+        spread = product_prices["spread"].dropna()
+
+        summary: Dict[str, float | int | None] = {
+            "ticks": int(len(product_prices)),
+            "mid_min": float(mid.min()) if not mid.empty else None,
+            "mid_max": float(mid.max()) if not mid.empty else None,
+            "mid_mean": float(mid.mean()) if not mid.empty else None,
+            "mid_std": float(mid.std()) if len(mid) > 1 else 0.0,
+            "spread_mean": float(spread.mean()) if not spread.empty else None,
+            "spread_std": float(spread.std()) if len(spread) > 1 else 0.0,
+        }
+
+        trade_symbol_col = "symbol" if "symbol" in safe_trades_df.columns else None
+        if trade_symbol_col is not None:
+            product_trades = safe_trades_df[safe_trades_df[trade_symbol_col] == product]
+        else:
+            product_trades = safe_trades_df.iloc[0:0]
+
+        if product_trades.empty:
+            summary["trade_count"] = 0
+            summary["trade_volume"] = 0
+            summary["trade_vwap"] = None
+        else:
+            total_volume = float(product_trades["abs_quantity"].sum())
+            total_notional = float(product_trades["notional"].sum())
+            summary["trade_count"] = int(len(product_trades))
+            summary["trade_volume"] = int(total_volume)
+            summary["trade_vwap"] = (
+                float(total_notional / total_volume) if total_volume > 0 else None
+            )
+
+        summaries[str(product)] = summary
+
+    return summaries
+
+
+def plot_analysis_day(
+    round_id: int,
+    day: int,
+    prices_df: pd.DataFrame,
+    trades_df: pd.DataFrame,
+    output_dir: Path,
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_prices_df = prices_df.copy()
+    col = safe_prices_df.get("timestamp")
+    if col is None:
+        col = pd.Series([None] * len(safe_prices_df), index=safe_prices_df.index)
+    safe_prices_df["timestamp"] = pd.to_numeric(col, errors="coerce")
+
+    col = safe_prices_df.get("mid_price")
+    if col is None:
+        col = pd.Series([None] * len(safe_prices_df), index=safe_prices_df.index)
+    safe_prices_df["mid_price"] = pd.to_numeric(col, errors="coerce")
+
+    safe_trades_df = trades_df.copy()
+    if not safe_trades_df.empty:
+        col = safe_trades_df.get("timestamp")
+        if col is None:
+            col = pd.Series([None] * len(safe_trades_df), index=safe_trades_df.index)
+        safe_trades_df["timestamp"] = pd.to_numeric(col, errors="coerce")
+
+        col = safe_trades_df.get("quantity")
+        if col is None:
+            col = pd.Series([None] * len(safe_trades_df), index=safe_trades_df.index)
+        safe_trades_df["quantity"] = pd.to_numeric(col, errors="coerce")
+        safe_trades_df["abs_quantity"] = safe_trades_df["quantity"].abs()
+
+    plot_module = cast(Any, plt)
+    fig, axes = plot_module.subplots(2, 1, figsize=(14, 8), sharex=True)
+
+    for product, group in safe_prices_df.groupby("product"):
+        ordered = group.sort_values("timestamp")
+        axes[0].plot(
+            ordered["timestamp"],
+            ordered["mid_price"],
+            linewidth=1.2,
+            label=str(product),
+        )
+    axes[0].set_ylabel("Mid Price")
+    axes[0].set_title(f"Round {round_id} Day {day}: Mid Price by Product")
+    axes[0].legend(loc="upper right")
+    axes[0].grid(alpha=0.25)
+
+    if safe_trades_df.empty:
+        axes[1].text(
+            0.5,
+            0.5,
+            "No trade rows available",
+            ha="center",
+            va="center",
+            transform=axes[1].transAxes,
+        )
+        axes[1].set_ylabel("Trade Volume")
+        axes[1].set_xlabel("Timestamp")
+    else:
+        trade_volume_ts = (
+            safe_trades_df.groupby("timestamp")["abs_quantity"].sum().sort_index()
+        )
+        axes[1].plot(
+            trade_volume_ts.index,
+            trade_volume_ts.values,
+            color="#1f77b4",
+            linewidth=1.2,
+        )
+        axes[1].set_ylabel("Trade Volume")
+        axes[1].set_xlabel("Timestamp")
+        axes[1].set_title("Total Trade Volume by Timestamp")
+        axes[1].grid(alpha=0.25)
+
+    fig.tight_layout()
+    out_path = output_dir / f"round_{round_id}_day_{day}_analysis.png"
+    fig.savefig(str(out_path), dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def run_data_analysis(
+    round_id: int, data_root: Path, output_dir: Path
+) -> Dict[str, Any]:
+    round_days = discover_round_days(round_id=round_id, data_root=data_root)
+    if not round_days:
+        raise FileNotFoundError(f"No day files discovered for round {round_id}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    day_summaries: List[Dict[str, Any]] = []
+    plot_paths: Dict[str, str] = {}
+
+    for day_files in round_days:
+        prices_df = pd.read_csv(day_files.prices_path, sep=";")
+        trades_df = pd.read_csv(day_files.trades_path, sep=";")
+
+        product_summary = summarize_product_day(
+            prices_df=prices_df, trades_df=trades_df
+        )
+        day_plot = plot_analysis_day(
+            round_id=round_id,
+            day=day_files.day,
+            prices_df=prices_df,
+            trades_df=trades_df,
+            output_dir=output_dir,
+        )
+
+        day_summary: Dict[str, Any] = {
+            "day": day_files.day,
+            "pricesPath": str(day_files.prices_path),
+            "tradesPath": str(day_files.trades_path),
+            "rowCount": {
+                "prices": int(len(prices_df)),
+                "trades": int(len(trades_df)),
+            },
+            "products": product_summary,
+            "plot": str(day_plot),
+        }
+        day_summaries.append(day_summary)
+        plot_paths[str(day_files.day)] = str(day_plot)
+
+    all_products = sorted(
+        {
+            product
+            for day_summary in day_summaries
+            for product in day_summary["products"].keys()
+        }
+    )
+
+    analysis_artifact: Dict[str, Any] = {
+        "round": round_id,
+        "generatedAtEpochMs": int(time.time() * 1000),
+        "dataRoot": str(data_root.resolve()),
+        "outputDir": str(output_dir.resolve()),
+        "days": day_summaries,
+        "products": all_products,
+        "plots": plot_paths,
+    }
+
+    summary_path = output_dir / f"round_{round_id}_analysis.json"
+    summary_path.write_text(json.dumps(analysis_artifact, indent=2), encoding="utf-8")
+    analysis_artifact["summaryPath"] = str(summary_path)
+
+    return analysis_artifact
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Platform-like local runner: strategy file -> run artifact JSON"
@@ -570,10 +801,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root folder containing round directories",
     )
     parser.add_argument(
+        "-d",
+        "--data-file",
+        type=Path,
+        help="Specific data file to run instead of scanning data root",
+    )
+    parser.add_argument(
         "-p", "--plot", action="store_true", help="Save plots for each day"
     )
     parser.add_argument(
-        "-d", "--data-file", type=Path, help="Specific data file to run instead of scanning data root"
+        "-a",
+        "--analyze",
+        action="store_true",
+        dest="analyze",
+        help="Analyze round market data from data/roundX and save outputs in plots/data",
     )
     parser.add_argument(
         "--run-id",
@@ -594,17 +835,40 @@ def main() -> int:
         parser = build_parser()
         args = parser.parse_args()
 
+        if args.analyze:
+            analysis_output_dir = plots_dir / "data"
+            analysis_artifact = run_data_analysis(
+                round_id=args.round,
+                data_root=args.data_root,
+                output_dir=analysis_output_dir,
+            )
+
+            print("Round data analysis complete")
+            print(f"Round: {args.round}")
+            print(f"Data root: {analysis_artifact['dataRoot']}")
+            print(f"Output dir: {analysis_artifact['outputDir']}")
+            print(f"Summary JSON: {analysis_artifact['summaryPath']}")
+            print("Day plots:")
+            for day, path in sorted(analysis_artifact["plots"].items()):
+                print(f"  day {day} -> {path}")
+            return 0
+
         strategy_path = resolve_strategy_path(args.round, args.strategy)
         trader_cls = load_trader_class(strategy_path)
 
         if args.data_file:
             import re
+
             m = re.search(r"day_(-?\d+)", args.data_file.name)
             days = [int(m.group(1))] if m else [0]
         else:
-            round_days = discover_round_days(round_id=args.round, data_root=args.data_root)
+            round_days = discover_round_days(
+                round_id=args.round, data_root=args.data_root
+            )
             if not round_days:
-                raise FileNotFoundError(f"No day files discovered for round {args.round}")
+                raise FileNotFoundError(
+                    f"No day files discovered for round {args.round}"
+                )
             days = [item.day for item in round_days]
 
         run_id = args.run_id or generate_run_id()
